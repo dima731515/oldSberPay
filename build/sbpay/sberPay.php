@@ -24,7 +24,12 @@ use Monolog\Handler\NativeMailerHandler;
 use Monolog\Formatter\HtmlFormatter;
 use Monolog\Formatter\LineFormatter;
 
-
+/**
+ * Драйвер для работы счетов Макслевел с онлайн оплатой Сбребанк
+ * Интерфейс в данном случае чтоб видеть публичные методы
+ *
+ * @author Dmitriy Perevyazkin <dima731515@yandex.ru>
+ */
 interface sberInterface
 {
     public function sberCallback(string $json) : bool; // принимает от сбербанка результаты платежей
@@ -91,14 +96,30 @@ class SberPay implements sberInterface
 
         $this->loger = new Logger('maxlevel.sberPay.log'); 
         $this->loger->pushHandler(new StreamHandler(self::LOGER_PATH . date('d-m-Y') . '_' . self::LOGER_FILE_NAME, Logger::INFO, false));
-//      $this->loger->info('Сообщение в лог', []);
+        //$this->loger->info('Сообщение в лог', []);
 
     }
+    /**
+     * Публичный метод логирования, чтоб из вне использовать
+     *
+     * @param sting string
+    */
     public function log($string) : void
     {
         $this->loger->info($string, []);
     }
 
+    /**
+     * Обрабатывает запрсы от сбербанк
+     * получает переданную контрольную строку,
+     * используя ключ из настроек и алгоритм получения контрольной строки
+     * определяет правдоподобность запроса
+     *
+     * @param string json строка параметров, среди которых контрольная строка
+     * @return bool, возвращает факт правдоподобности запроса
+     *
+     * @see initBySberOrderNumber()
+     */
     public function sberCallback(string $json) : bool
     {
         $arData = json_decode($json, true);
@@ -125,6 +146,14 @@ class SberPay implements sberInterface
             return true;
         return false;
     }
+
+    /**
+     * Проверит, не была ли ссылка уже запрошена и сохранена в счете битрикс 
+     * получает возвращает ее
+     * или обащается к сбербак для генерирования ссылки
+     *
+     * @return string, возвращает ссылку (https://sber.ru....)
+     */
     public function getPayLink() : string
     {
         try{
@@ -136,6 +165,14 @@ class SberPay implements sberInterface
         }
         return $this->payLink; 
     }
+
+    /**
+     * Выполняет полный возврат денег, без движения средств, при этом коммисия за транзакцию не взымается
+     * Можно выполнить до 24:00 текущего (дня платежа) дня
+     * @param string sberOrderId, обязательный UUID заказа (не путать с номером зказа) 
+     * @param aray data, не используется
+     * @return array, ответ Сбера 
+     */
     public function reverseOrder($sberOrderId = null, array $data = []): array
     {
         if(null === $sberOrderId && null === $this->uuidSberOrderNumber)
@@ -152,6 +189,16 @@ class SberPay implements sberInterface
         return $result; 
     }
 
+    /**
+     * Возврат денег покупателю,
+     * без ограничений по дате платежа,
+     * взымается коммисия с продавца,
+     * можно делать частичный возврат
+     * @param string sberOrderId, обязательный UUID заказа (платежа в Сбербанк)
+     * @param string amoun, сумма которую нужно вернуть
+     * @param array data, до параметры, не используется
+     * @return array, возвращает ответ Сбербанк
+     */
     public function refundOrder($sberOrderId = null, int $amount = null, array $data = []): array
     {
         if(null === $sberOrderId && null === $this->uuidSberOrderNumber)
@@ -173,6 +220,12 @@ class SberPay implements sberInterface
         return $result; 
     }
 
+    /**
+     * Устанавливает факт оплаты, и дату оплаты в Битрикс
+     * Должна вызываться только после инициализации методом sberCallback() 
+     * т.к. в нем устанавливаются необходимые параметры
+     * @return bool, вернет установлен/не установлен
+     */
     public function setPay() : bool 
     {
         if('deposited' !== $this->sberCallbackData['operation'] || 1 != $this->sberCallbackData['status'])
@@ -193,7 +246,13 @@ class SberPay implements sberInterface
         return $res;
     }
 
-    // если ссылка на оплату уже была получена в сбер, то этот метод вернет ее получив в записи инфоблока счетов
+    /**
+     * Так как сбер генерирут ссылку на оплату один раз
+     * при первом получении сохраняем ссылку в Битрикс
+     * данный метод проверит, нет ли ссылки в счете битрикс
+     * если ссылка на оплату уже была получена в сбер, то этот метод вернет ее получив в записи инфоблока счетов
+     * @return bool, !!!Возвращает только факт (ссылка установлена), саму ссылку возвращает метод getPayLink()
+     */
     private function getBxPayLink() : bool 
     {
         if( !isset($this->bxInvoiceData['DETAIL_TEXT']) || empty($this->bxInvoiceData['DETAIL_TEXT']) )
@@ -207,7 +266,10 @@ class SberPay implements sberInterface
         return true;
     }
 
-    // регистрация заказа в сбер и получение ссылки на оплату
+    /** Регистрирует заказ в сбербанк (потуму что так работает Сбербанк)
+     * сбер возвращает ссылку на оплату
+     * @return bool
+     */
     private function getSberApiPayLink() : bool
     {
         $this->params = [
@@ -227,7 +289,11 @@ class SberPay implements sberInterface
         return false;
     }
 
-    // делает запрос к инфоблоку 
+    /**
+     * получает Счет из Битрикс используя API Битрикс
+     * @param int invoiceId, id элемента инфоблока
+     * @return array, возввращает стандартный Битрикс Макссив
+     */
     protected function getBxInvoiceById(int $invoiceId) : array 
     {
         if(!CModule::IncludeModule("iblock")) die();
@@ -241,8 +307,12 @@ class SberPay implements sberInterface
         return $result;
     }
 
-    // сохраняет сылку на оплату полученную в сбер, чтою повторно не запрашивать
-    protected function setPayLinkDataInBxInvoice($data) : bool
+    /**
+     * сохраняет сылку на оплату полученную в сбер в счете Битрикс, чтобы повторно не запрашивать
+     * @param string data, все, что прислал Сбер на запрос ссылки на оплату 
+     * @return bool
+     */
+    protected function setPayLinkDataInBxInvoice(string $data) : bool
     {
         $el = new CIBlockElement;
         $prop = [ 
@@ -252,7 +322,11 @@ class SberPay implements sberInterface
         return $res;
     }
 
-    // декодирует номер заказ сбер (234234-invoice) делает запрос к Битрикс и инициализирует полученными данными
+    /**
+     * декодирует номер заказ сбер (234234-invoice) делает запрос к Битрикс и инициализирует полученными данными
+     *
+     *
+     */
     protected function initBySberOrderNumber() : void
     {
         if(null === $this->sberOrderNumber){
@@ -264,22 +338,31 @@ class SberPay implements sberInterface
         $this->initByInvoiceId($invoiceId);
     }
 
-    // кодирует id счета для сбербанка (1231234-invoice)
+    /**
+     * кодирует id счета для сбербанка (1231234-invoice)
+     * @return string (131231-invoice)
+     */
     private function encodeSberOrderNumByInvoiceId($invoiceId) : string
     {
-        // return 131231-invoice
         return $invoiceId . '-invoice' ;
     }
-    // декодирует номер заказа (23234-invoice)
+    /**
+     * декодирует номер заказа (23234-invoice)
+     * @use (input 123123-invoice)
+     * @return string (123123)
+     */
     private function decodeSberOrderNum() : string
     {
-        // input 123123-invoice
-        // return 123123
         $result = explode('-', $this->sberOrderNumber);
         return $result[0];
     }
-    
-    // запрашивает счет по id и заполняет свойства объекта 
+
+    /**
+     * Инициализирует Объект по id счета
+     * запрашивает счет по id и заполняет свойства объекта 
+     *
+     *
+     */ 
     public function initByInvoiceId(string $invoiceId) : void
     {
         $this->bxInvoiceData = $this->getBxInvoiceById( (int)$invoiceId );
@@ -307,7 +390,9 @@ class SberPay implements sberInterface
         $this->invoiceInit = true;
     }
 
-    // получает и устанавливает настройки для доступа к Сбер в зависимости от Юр лица
+    /**
+     * получает и устанавливает настройки для доступа к Сбер в зависимости от Юр лица
+     */
     protected function initConfigByCompanyCode(string $code) : void
     {
         if( !key_exists($code, SBER_CONFIG) || empty(SBER_CONFIG[$code]) )
@@ -341,7 +426,6 @@ class SberPay implements sberInterface
     // инициализирует объект Client для работы с api сбербанк
     protected function initClient() : bool  
     {
-//        $this->loger->info('инициализация Client', []);
         $this->client = new Client($this->config['sberOptions']);
         return true; 
     }
