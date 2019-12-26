@@ -102,11 +102,11 @@ class SberPay implements sberInterface
     /**
      * Публичный метод логирования, чтоб из вне использовать
      *
-     * @param sting string
+     * @param sting $message 
     */
-    public function log($string) : void
+    public function log($message) : void
     {
-        $this->loger->info($string, []);
+        $this->loger->info($message, []);
     }
 
     /**
@@ -152,6 +152,8 @@ class SberPay implements sberInterface
      * получает возвращает ее
      * или обащается к сбербак для генерирования ссылки
      *
+     * @uses getBxPayLink()
+     * @uses getSberApiPayLink()
      * @return string, возвращает ссылку (https://sber.ru....)
      */
     public function getPayLink() : string
@@ -240,10 +242,9 @@ class SberPay implements sberInterface
 
         // если нет, утановить и вернуть результат
         $res = \CIBlockElement::SetPropertyValues($this->bxInvoiceData['ID'], self::INVOICE_IBLOCK_ID, "Y", self::PAYED_FIELD_CODE);
-        if($res)
-            $resPayDate = \CIBlockElement::SetPropertyValues($this->bxInvoiceData['ID'], self::INVOICE_IBLOCK_ID, (new DateTime())->format('Y-m-d\TH:i:s'), self::PAY_DATE_FIELD_CODE);
+        $resPayDate = \CIBlockElement::SetPropertyValues($this->bxInvoiceData['ID'], self::INVOICE_IBLOCK_ID, (new DateTime())->format('d.m.Y H:i:s'), self::PAY_DATE_FIELD_CODE);
 
-        return $res;
+        return true;
     }
 
     /**
@@ -277,7 +278,6 @@ class SberPay implements sberInterface
             'expirationDate' => $this->dateActiveTo,
         ];
 
-        $this->loger->info('registerOrder', $this->config); 
         $result = $this->client->registerOrder($this->sberOrderNumber, $this->summ, $this->config['returnUrl'], $this->params);
 
         if( isset($result['formUrl']) && !empty($result['formUrl']) )
@@ -348,7 +348,7 @@ class SberPay implements sberInterface
     }
     /**
      * декодирует номер заказа (23234-invoice)
-     * @use (input 123123-invoice)
+     * @see (input 123123-invoice)
      * @return string (123123)
      */
     private function decodeSberOrderNum() : string
@@ -426,7 +426,13 @@ class SberPay implements sberInterface
     // инициализирует объект Client для работы с api сбербанк
     protected function initClient() : bool  
     {
-        $this->client = new Client($this->config['sberOptions']);
+        try{
+            $this->client = new Client($this->config['sberOptions']);
+        }catch(Exception $e)
+        {
+            $this->loger->info($e->getMessage(), []);
+            throw new Exception('Не удалось создать объект Client');
+        }
         return true; 
     }
     public function getCompanyCode() : string
