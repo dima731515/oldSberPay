@@ -1,7 +1,12 @@
 <?php declare(strict_types=1);
-$_SERVER["DOCUMENT_ROOT"] = "/home/bitrix/www";
-require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.php");
 
+namespace Pay;
+
+if(null !== phpunit && phpunit !== true)
+{
+    $_SERVER["DOCUMENT_ROOT"] = "/home/bitrix/www";
+    require($_SERVER["DOCUMENT_ROOT"]."/bitrix/modules/main/include/prolog_before.php");
+}
 
 // файл настроек, содержит пароли
 if(file_exists('/home/bitrix/.key.php')){
@@ -32,15 +37,15 @@ use Monolog\Formatter\LineFormatter;
  */
 interface sberInterface
 {
-    public function sberCallback(string $json) : bool; // принимает от сбербанка результаты платежей
+    public function sberCallback   (string $json) : bool; // принимает от сбербанка результаты платежей
     public function initByInvoiceId(string $invoiceId) : void; // инициализация объекта данными из Битрикс
-    public function getPayLink() : string; // выззывается после инициализации, формирует "заказ" в Сбербанке, возвращает ссылку на оплату
-    public function reverseOrder($sberOrderId = null, array $data = []): array; // полный возврат платежа (до 24:00 дня платежа) коммисия не вызымается
-    public function refundOrder($sberOrderId = null, int $amount = null, array $data = []): array; // возврат, возможен частичный, с продавца взымается коммисия
-    public function setPay() : bool; // проставить оплату текущему счету.
-    public function log($string) : void; // для логирования снаружи.
-    public function getCompanyCode() : string; // Сахар для формирования чека
-    public function getInvoiceId() : int; // Сахар для формирования чека
+    public function getPayLink     () : string; // вызывается после инициализации, формирует "заказ" в Сбербанке, возвращает ссылку на оплату
+    public function reverseOrder   (string $sberOrderId = null, array $data = []): array; // полный возврат платежа (до 24:00 дня платежа) коммисия не вызымается
+    public function refundOrder    (string $sberOrderId = null, int $amount = null, array $data = []): array; // возврат, возможен частичный, с продавца взымается коммисия
+    public function setPay         () : bool; // проставить оплату текущему счету.
+    public function log            (string $string) : void; // для логирования снаружи.
+    public function getCompanyCode () : string; // Сахар для формирования чека
+    public function getInvoiceId   () : int; // Сахар для формирования чека
 }
 
 class SberPay implements sberInterface 
@@ -104,7 +109,7 @@ class SberPay implements sberInterface
      *
      * @param sting $message 
     */
-    public function log($message) : void
+    public function log(string $message) : void
     {
         $this->loger->info($message, []);
     }
@@ -122,17 +127,18 @@ class SberPay implements sberInterface
      */
     public function sberCallback(string $json) : bool
     {
+        $this->loger->info('От Сбербанк пришол запрос о пллатеже: ' . $json, []);
         $arData = json_decode($json, true);
         if ( !is_array($arData) || !isset($arData['checksum']) || empty($arData['checksum']) || empty($arData['orderNumber']) )
         {
             $this->loger->info('Формат ответа не соответствует ожидаемому!', []);
-            Throw new Exception('Формат ответа не соответствует ожидаемому!');
+            Throw new \Exception('Формат ответа не соответствует ожидаемому!');
         }
 
         $this->sberCallbackData = $arData; 
         $this->checksum = $arData['checksum']; 
         $this->sberOrderNumber = $arData['orderNumber']; 
-        $this->initBySberOrderNumber(); // для получения токена для конкретного юр.лица
+        $this->initBySberOrderNumber(); // для получения токена из конфигруации для конкретного юр.лица
 
         // формируем переданые данные по правилам Сбера:
         unset($arData['checksum']);
@@ -160,10 +166,10 @@ class SberPay implements sberInterface
     {
         try{
             $res = ($this->getBxPayLink() || $this->getSberApiPayLink());
-        }catch(Exception $e){
+        }catch(\Exception $e){
             $this->loger->info($e->getMessage(), []);
             //echo $e->getMessage();
-            throw new Exception('Не удалось получить ссылку на оплату, оплата невозможна! Обратитесь к администратору!'); 
+            throw new \Exception('Не удалось получить ссылку на оплату, оплата невозможна! Обратитесь к администратору!'); 
         }
         return $this->payLink; 
     }
@@ -172,18 +178,18 @@ class SberPay implements sberInterface
      * Выполняет полный возврат денег, без движения средств, при этом коммисия за транзакцию не взымается
      * Можно выполнить до 24:00 текущего (дня платежа) дня
      * @param string sberOrderId, обязательный UUID заказа (не путать с номером зказа) 
-     * @param aray data, не используется
+     * @param array data, не используется
      * @return array, ответ Сбера 
      */
-    public function reverseOrder($sberOrderId = null, array $data = []): array
+    public function reverseOrder(string $sberOrderId = null, array $data = []): array
     {
         if(null === $sberOrderId && null === $this->uuidSberOrderNumber)
         { 
             $this->loger->info('Нет данных для Полного возврата!', []);
-            Throw new Exception('Нет данных для Полного возврата!');
+            Throw new \Exception('Нет данных для Полного возврата!');
         }
 
-        $this->uuidSberOrderNumber = ($sberOrderId)?$sberOrderId:$this->uuidSberOrderNumber; 
+        $this->uuidSberOrderNumber = ($sberOrderId) ? $sberOrderId : $this->uuidSberOrderNumber; 
 
         $this->initBySberOrderNumber(); // для получения токена для конкретного юр.лица
         $result = $this->client->reverseOrder( $this->uuidSberOrderNumber );
@@ -201,17 +207,17 @@ class SberPay implements sberInterface
      * @param array data, до параметры, не используется
      * @return array, возвращает ответ Сбербанк
      */
-    public function refundOrder($sberOrderId = null, int $amount = null, array $data = []): array
+    public function refundOrder(string $sberOrderId = null, int $amount = null, array $data = []): array
     {
         if(null === $sberOrderId && null === $this->uuidSberOrderNumber)
         {
            $this->loger->info('Нет данных для Полного возврата!', []);
-           Throw new Exception('Нет данных для Полного возврата!');
+           Throw new \Exception('Нет данных для Полного возврата!');
         }
         if(null === $amount && null === $this->summ)
         {
            $this->loger->info('Не указана сумма возврата, является обязательной!', []);
-           Throw new Exception('Не указана сумма возврата, является обязательной!');
+           Throw new \Exception('Не указана сумма возврата, является обязательной!');
         }
 
         $this->uuidSberOrderNumber = ($sberOrderId)?$sberOrderId:$this->uuidSberOrderNumber; 
@@ -233,7 +239,7 @@ class SberPay implements sberInterface
         if('deposited' !== $this->sberCallbackData['operation'] || 1 != $this->sberCallbackData['status'])
         {
            $this->loger->info('Статус не соответствует оплаченному!', []);
-           Throw new Exception('Статус не соответствует оплаченному!');
+           Throw new \Exception('Статус не соответствует оплаченному!');
         }
         // сделать запрос, может фаг оплаты уже стоит
         // если стоит вернуть true
@@ -331,7 +337,7 @@ class SberPay implements sberInterface
     {
         if(null === $this->sberOrderNumber){
             $this->loger->info('Необходимо установить sberOrderNumber!', []);
-            Throw new Exception('Необходимо установить sberOrderNumber!');
+            Throw new \Exception('Необходимо установить sberOrderNumber!');
         }
 
         $invoiceId = $this->decodeSberOrderNum();
@@ -342,7 +348,7 @@ class SberPay implements sberInterface
      * кодирует id счета для сбербанка (1231234-invoice)
      * @return string (131231-invoice)
      */
-    private function encodeSberOrderNumByInvoiceId($invoiceId) : string
+    private function encodeSberOrderNumByInvoiceId(string $invoiceId) : string
     {
         return $invoiceId . '-invoice' ;
     }
@@ -392,13 +398,15 @@ class SberPay implements sberInterface
 
     /**
      * получает и устанавливает настройки для доступа к Сбер в зависимости от Юр лица
+     * @param string $code
+     * @return void
      */
     protected function initConfigByCompanyCode(string $code) : void
     {
         if( !key_exists($code, SBER_CONFIG) || empty(SBER_CONFIG[$code]) )
         {
            $this->loger->info('В файле конфигурации нет записи о компании '. $code . '!', []);
-           Throw new Exception('В файле конфигурации нет записи о компании ' . $code . '!');
+           Throw new \Exception('В файле конфигурации нет записи о компании ' . $code . '!');
         }
 
         $this->companyCode = $code;
@@ -428,21 +436,29 @@ class SberPay implements sberInterface
     {
         try{
             $this->client = new Client($this->config['sberOptions']);
-        }catch(Exception $e)
+        }catch(\Exception $e)
         {
             $this->loger->info($e->getMessage(), []);
-            throw new Exception('Не удалось создать объект Client');
+            throw new \Exception('Не удалось создать объект Client');
         }
         return true; 
     }
+    /**
+     * Публичный метод, чтоб получить код компании с которой сейчас идет работа
+     * @return string motor/maxlevel/...
+     */
     public function getCompanyCode() : string
     {
-        if(null === $this->companyCode) Throw new Exception('Отсутствует Код компании, такого быть не должно!');
+        if(null === $this->companyCode) Throw new \Exception('Отсутствует Код компании, такого быть не должно!');
         return $this->companyCode;
     }
+    /**
+     * Получить id текущего счета
+     * @return int
+     */
     public function getInvoiceId() : int
     {
-        if( !isset($this->bxInvoiceData['ID']) ||  empty($this->bxInvoiceData['ID'])) Throw new Exception('Отсутствует ID счета, такого быть не должно!');
+        if( !isset($this->bxInvoiceData['ID']) ||  empty($this->bxInvoiceData['ID'])) Throw new \Exception('Отсутствует ID счета, такого быть не должно!');
         return (int) $this->bxInvoiceData['ID'];
     }
 }
